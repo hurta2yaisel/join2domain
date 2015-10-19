@@ -69,7 +69,7 @@ echo_info()
     echo -e "\e[1;34m$1\e[0m" && sleep 1
 }
 
-echo_info "Getting some important information..."
+echo_info "Getting some important informations before you begin..."
 
 readopt()
 {
@@ -134,9 +134,12 @@ if  ! test -x "$APTBIN"; then
             exit 1
     fi
 fi
+
+echo_info "Installing dependencies..."
 $APTBIN update || exit 1
 $APTBIN $APTOPTS install $DEPS || exit 1
 
+echo_info "Synchronizing date and time via NTP..."
 ntpdate -u $NTP_SERVER && hwclock --systohc
 
 KRB_FILE=/etc/krb5.conf
@@ -147,11 +150,13 @@ WIN_INIT=/etc/init.d/winbind
 SMB_INIT=/etc/init.d/smbd
 SUD_FILE=/etc/sudoers.d/10_admins
 
+echo_info "Making backups of some files..."
 cp $KRB_FILE{,.bak}
 cp $SMB_FILE{,.bak}
 mkdir -p $HOME/backup
 cp $WIN_FILE  $HOME/backup/winbind.bak
 
+echo_info "Setting up kerberos..."
 cat > $KRB_FILE <<EOF
 [logging]
     default = FILE:/var/log/krb5libs.log
@@ -186,6 +191,7 @@ cat >> $KRB_FILE <<EOF
     ${DOMAIN,,} = ${DOMAIN^^}
 EOF
 
+echo_info "Setting up samba..."
 cat > $SMB_FILE <<EOF
 [global]
     workgroup = ${WORKGROUP}
@@ -220,6 +226,17 @@ cat > $SMB_FILE <<EOF
 ;   valid users = MYDOMAIN\%S
 EOF
 
+echo_info "Setting up nsswitch..."
+PASSWD=$(grep -i "winbind" $NSS_FILE | egrep ^passwd | wc -l)
+if [ $PASSWD -eq 0 ]; then
+    sed -i '/^passwd/s/compat/compat winbind/g' $NSS_FILE
+fi
+GROUP=$(grep -i "winbind" $NSS_FILE | egrep ^group | wc -l)
+if [ $GROUP -eq 0 ]; then
+    sed -i '/^group/s/compat/compat winbind/g' $NSS_FILE
+fi
+
+echo_info "Setting up winbind..."
 cat > $WIN_FILE <<EOF
 Name: Winbind NT/Active Directory authentication
 Default: yes
@@ -243,35 +260,29 @@ Session:
     optional    pam_winbind.so
 EOF
 
-PASSWD=$(grep -i "winbind" $NSS_FILE | egrep ^passwd | wc -l)
-if [ $PASSWD -eq 0 ]; then
-    sed -i '/^passwd/s/compat/compat winbind/g' $NSS_FILE
-fi
-GROUP=$(grep -i "winbind" $NSS_FILE | egrep ^group | wc -l)
-if [ $GROUP -eq 0 ]; then
-    sed -i '/^group/s/compat/compat winbind/g' $NSS_FILE
-fi
-
+echo_info "Enabling automatic beginning of winbind..."
 SMBD=$(grep -i "smbd" $WIN_INIT | egrep "^# Should-Start" | wc -l)
 if [ $SMBD -eq 0 ]; then
     sed -i '/^# Should-Start/s/samba/smbd/g' $WIN_INIT
 fi
-
-pam-auth-update
-
 update-rc.d winbind defaults
 systemctl enable winbind > /dev/null
+
+echo_info "Dissabling Kerberos authentication..."
+pam-auth-update
 
 $WIN_INIT stop
 $SMB_INIT restart
 $WIN_INIT start
 
+echo_info "Setting up sudoers file..."
 cat > $SUD_FILE <<EOF
 User_Alias ADMIN_GROUP="$AUTHORIZED_ACCESS"
 ADMIN_GROUP ALL=(ALL:ALL) ALL
 EOF
 chmod 0440 $SUD_FILE
 
+echo_info "joining this machine to ${DOMAIN^^}..."
 net join -U $USER_DOMAIN
 net ads testjoin && $WIN_INIT restart > /dev/null
 adduser $USER_DOMAIN sudo > /dev/null
