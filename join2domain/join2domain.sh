@@ -208,11 +208,11 @@ libpam-winbind libnss-winbind"
 APTBIN=$(which aptitude)
 APTOPTS="--allow-untrusted -y -q"
 if  ! test -x "$APTBIN"; then
-    APTBIN=$(which apt-get)
+    APTBIN=$(which apt || which apt-get)
     if test -x "$APTBIN"; then
         APTOPTS="--auto-remove --allow-unauthenticated -y -q"
         else
-            echo_error "Without aptitude or apt-get we can't do anything!"
+            echo_error "Without aptitude, apt or apt-get we can't do anything!"
     fi
 fi
 
@@ -346,15 +346,16 @@ SMBD=$(grep -i "smbd" $WIN_INIT | egrep "^# Should-Start" | wc -l)
 if [ $SMBD -eq 0 ]; then
     sed -i '/^# Should-Start/s/samba/smbd/g' $WIN_INIT
 fi
-UPDATE_BIN=$(which systemctl)
-if test -x "$UPDATE_BIN"; then
-    systemctl disable winbind
-    systemctl enable winbind
-fi
-UPDATE_BIN=$(which insserv)
-if test -x "$UPDATE_BIN"; then
+if test -x "$(which insserv)"; then
     insserv -r winbind
     insserv winbind
+fi
+SYSTEMCTL=$(which systemctl)
+RESET_SERVICES=""
+if test -x "$SYSTEMCTL"; then
+    systemctl disable winbind
+    systemctl enable winbind
+    RESET_SERVICES="systemctl restart smbd && systemctl restart winbind"
 fi
 UPDATE_BIN=$(which update-rc.d)
 if test -x "$UPDATE_BIN"; then
@@ -365,12 +366,17 @@ fi
 echo_section "Dissabling Kerberos authentication..."
 pam-auth-update
 
-$WIN_INIT stop
-$SMB_INIT restart
-$WIN_INIT start
+if [ "$SYSTEMCTL" != "" ]; then
+    if test -x "$(which service)"; then
+        RESET_SERVICES="service smbd restart && service winbind restart"
+    else
+        RESET_SERVICES="$SMB_INIT restart && $WIN_INIT restart"
+    fi
+fi
+$RESET_SERVICES
 
-echo_section "joining this machine to ${DOMAIN^^}..."
-net join -U $USER_DOMAIN && $WIN_INIT restart > /dev/null
+echo_section "Joining this machine to ${DOMAIN^^}..."
+net join -U $USER_DOMAIN && $RESET_SERVICES && id $USER_DOMAIN > /dev/null
 if [ $? -eq 0 ]; then
     echo_section "Setting up sudoers file..."
     cat > $SUD_FILE <<EOF
@@ -379,7 +385,7 @@ ADMIN_GROUP ALL=(ALL:ALL) ALL
 EOF
     chmod 0440 $SUD_FILE
     adduser $USER_DOMAIN sudo > /dev/null
-    echo_info "$(net ads testjoin)!!!"
+    echo_info "$(net ads testjoin). Enjoy it!!!"
     exit 0
 fi
-echo_error "The join failed!!!"
+echo_error "The join to the domain ${DOMAIN^^} failed!!!"
