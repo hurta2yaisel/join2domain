@@ -62,8 +62,8 @@ if ! host $(hostname -f) > /dev/null; then
     if [ $EUID -ne 0 ];then
         echo_error "$USER, you must be root!"
     fi
-    else
-        echo_error "$(hostname -f) is already registred in your DNS server!" $?
+else
+    echo_error "$(hostname -f) is already registred in your DNS server!" $?
 fi
 
 if [ -e "/etc/debian_version" ]; then
@@ -73,20 +73,47 @@ if [ -e "/etc/debian_version" ]; then
 fi
 
 if [ -e "/etc/debian_version" -a -e /etc/lsb-release ]; then
-    OS_VERSION=`cat /etc/debian_version`
-    FIND=`grep "^DISTRIB_ID=" /etc/lsb-release | cut -d '=' -f2 | sed 's/"//g'`
-    if [ "${FIND}" = "Ubuntu" ]; then
-        OS_VERSION=`grep "^DISTRIB_RELEASE=" /etc/lsb-release | cut -d '=' -f2`
-        OS_FULLNAME="Ubuntu ${OS_VERSION}"
-        LINUX_VERSION="Ubuntu"
-    elif [ "${FIND}" = "Nova" ]; then
-        LINUX_VERSION="Nova"
-        OS_VERSION=`grep "^DISTRIB_RELEASE=" /etc/lsb-release | cut -d '=' -f2`
-        OS_FULLNAME=`grep "^DISTRIB_DESCRIPTION=" /etc/lsb-release | cut -d '=' -f2 | sed 's/"//g'`
-    else
-        OS_FULLNAME="Debian ${OS_VERSION}"
-        LINUX_VERSION="Debian"
-    fi
+    LINUX_VERSION=$(grep "^DISTRIB_ID=" /etc/lsb-release | cut -d '=' -f2 | sed 's/"//g')
+    OS_VERSION=$(grep "^DISTRIB_RELEASE=" /etc/lsb-release | cut -d '=' -f2)
+    OS_FULLNAME=$(grep "^DISTRIB_DESCRIPTION=" /etc/lsb-release | cut -d '=' -f2 | sed 's/"//g')
+fi
+
+MAJOR_VERSION=$(echo $OS_VERSION | cut -d "." -f1)
+ASK_USER=0
+if [ "${LINUX_VERSION,,}" = "debian" ]; then
+    case $MAJOR_VERSION in
+        8)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
+elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
+    case $MAJOR_VERSION in
+        14)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
+elif [ "${LINUX_VERSION,,}" = "linuxmint" ]; then
+    case $MAJOR_VERSION in
+        17)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
+elif [ "${LINUX_VERSION,,}" = "nova" ]; then
+    case $MAJOR_VERSION in
+        5)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
+else
+        echo_error "Sorry but $OS_FULLNAME is a linux distribution not supported by join2domain!"
 fi
 
 echo_warn()
@@ -119,35 +146,6 @@ readopt()
     esac
 }
 
-MAJOR_VERSION=$(echo $OS_VERSION | cut -d "." -f1)
-ASK_USER=0
-if [ "${LINUX_VERSION,,}" = "debian" ]; then
-    case $MAJOR_VERSION in
-        8)
-            ASK_USER=1
-            ;;
-        *)
-            ;;
-    esac
-elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
-    case $MAJOR_VERSION in
-        14)
-            ASK_USER=1
-            ;;
-        *)
-            ;;
-    esac
-elif [ "${LINUX_VERSION,,}" = "nova" ]; then
-    case $MAJOR_VERSION in
-        5)
-            ASK_USER=1
-            ;;
-        *)
-            ;;
-    esac
-else
-        echo_error "Sorry but $OS_FULLNAME is a linux distribution not supported by join2domain!"
-fi
 if [ $ASK_USER -eq 0 ]; then
     GO_AHEAD=$(readopt "$OS_FULLNAME is a version of $LINUX_VERSION not supported by join2domain. Do you want to continue?" "n")
     case ${GO_AHEAD,,} in
@@ -181,11 +179,14 @@ WORKGROUP=$(workgroup=$(echo ${DOMAIN,,} | cut -d "." -f1); echo ${workgroup^^})
 get_kdcs()
 {
     __DCSERVERS=""
-    __DCS=$(for li in $(host ${DOMAIN,,} | grep address | awk '{print $4}'); \
+    __DCS=$(for li in $(host uci.cu | grep address | awk '{print $4}'); \
     do echo $li; done | sort)
     for __dc in $__DCS; do
         if host $__dc > /dev/null; then
-            __ndc=$(host $__dc | awk '{len=length($5);print substr($5,0,len-1)}')
+            __ndc=$(host $__dc | awk '{len=length($5);print $5}')
+            if [ "${__ndc: -1}" = "." ]; then
+                __ndc=$(echo $__ndc | sed 's/.$//g')
+            fi
             __DCSERVERS="$__DCSERVERS $__ndc"
         fi
     done
@@ -203,7 +204,7 @@ if [ "$AUTHORIZED_ACCESS" != "" ]; then
 fi
 
 DEPS="ntpdate samba smbclient samba-common winbind krb5-user libpam-krb5 \
-libpam-winbind libnss-winbind"
+libpam-winbind libnss-winbind sudo"
 
 APTBIN=$(which aptitude)
 APTOPTS="--allow-untrusted -y -q"
@@ -350,15 +351,13 @@ if test -x "$(which insserv)"; then
     insserv -r winbind
     insserv winbind
 fi
-SYSTEMCTL=$(which systemctl)
 RESET_SERVICES=""
-if test -x "$SYSTEMCTL"; then
+if test -x "$(which systemctl)"; then
     systemctl disable winbind
     systemctl enable winbind
     RESET_SERVICES="systemctl restart smbd && systemctl restart winbind"
 fi
-UPDATE_BIN=$(which update-rc.d)
-if test -x "$UPDATE_BIN"; then
+if test -x "$(which update-rc.d)"; then
     update-rc.d winbind remove
     update-rc.d winbind defaults
 fi
@@ -366,7 +365,7 @@ fi
 echo_section "Dissabling Kerberos authentication..."
 pam-auth-update
 
-if [ "$SYSTEMCTL" != "" ]; then
+if [ "$RESET_SERVICES" = "" ]; then
     if test -x "$(which service)"; then
         RESET_SERVICES="service smbd restart && service winbind restart"
     else
