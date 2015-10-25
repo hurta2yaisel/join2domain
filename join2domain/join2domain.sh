@@ -88,6 +88,14 @@ if [ "${LINUX_VERSION,,}" = "debian" ]; then
         *)
             ;;
     esac
+elif [ "${LINUX_VERSION,,}" = "kali" ]; then
+    case $MAJOR_VERSION in
+        2)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
 elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
     case $MAJOR_VERSION in
         14)
