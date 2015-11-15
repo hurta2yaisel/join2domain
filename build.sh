@@ -26,5 +26,5 @@ git add *
 git add $OLD_RUNS
 git commit -m "Released join2domain v$NEW_VERSION...!"
 git push origin master
-git tag -a v$NEW_VERSION -m "$NEW_VERSION"
+git tag -a v$NEW_VERSION -m "v$NEW_VERSION"
 git push origin v$NEW_VERSION
