@@ -92,7 +92,7 @@ elif [ "${LINUX_VERSION,,}" = "kali" ]; then
     esac
 elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
     case $MAJOR_VERSION in
-        14)
+        14|15)
             ASK_USER=1
             ;;
         *)
@@ -210,7 +210,7 @@ ADMIN_KDC=$(readopt "Admin Kerberos server" "$(echo $KDCS | cut -d ' ' -f1)")
 NTP_SERVER=$(readopt "NTP Server" "${DOMAIN,,}")
 USER_DOMAIN=$(readopt "Domain User" "${USER,,}")
 AUTHORIZED_ACCESS=$(readopt "Authorized Users and Groups" \
-"domain admins,sec-${WORKGROUP,,}-audit,${USER_DOMAIN}")
+"domain admins,sec-${WORKGROUP,,}-security,${USER_DOMAIN}")
 
 if [ "$AUTHORIZED_ACCESS" != "" ]; then
     __ALIAS="$AUTHORIZED_ACCESS"
@@ -297,7 +297,7 @@ cat > $SMB_FILE <<EOF
     kerberos method = secrets only
     domain logons = no
     template homedir = /home/%U
-    template shell = /bin/false
+    template shell = /bin/bash
     winbind enum groups = yes
     winbind enum users = yes
     winbind use default domain = yes
@@ -338,9 +338,9 @@ Default: yes
 Priority: 192
 Auth-Type: Primary
 Auth:
-    [success=end default=ignore]    pam_winbind.so krb5_auth krb5_ccache_type=FILE cached_login=yes [require_membership_of$AUTHORIZED_ACCESS] try_first_pass
+    [success=end default=ignore]    pam_winbind.so krb5_auth krb5_ccache_type=FILE cached_login [require_membership_of$AUTHORIZED_ACCESS] try_first_pass
 Auth-Initial:
-    [success=end default=ignore]    pam_winbind.so krb5_auth krb5_ccache_type=FILE cached_login=yes [require_membership_of$AUTHORIZED_ACCESS]
+    [success=end default=ignore]    pam_winbind.so krb5_auth krb5_ccache_type=FILE cached_login [require_membership_of$AUTHORIZED_ACCESS]
 Account-Type: Primary
 Account:
     [success=end new_authtok_reqd=done default=ignore]  pam_winbind.so
