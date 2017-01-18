@@ -31,7 +31,7 @@ echo_info """
 ########################################################################
 # join2domain.sh                                                       #
 #                                                                      #
-# Copyright 2015 Yaisel Hurtado González <yaiselhg@uci.cu>             #
+# Copyright 2015-2017 Yaisel Hurtado González <yaiselhg@uci.cu>        #
 #                                                                      #
 # This program is free software; you can redistribute it and/or modify #
 # it under the terms of the GNU General Public License as published by #
@@ -58,24 +58,18 @@ echo_error()
     exit 1
 }
 
-if ! host $(hostname -f) > /dev/null; then
-    if [ $EUID -ne 0 ];then
-        echo_error "$USER, you must be root!"
-    fi
-else
-    echo_error "$(hostname -f) is already registred in your DNS server!" $?
+if [ $EUID -ne 0 ];then
+    echo_error "$USER, you must be root!"
 fi
 
-if [ -e "/etc/debian_version" ]; then
-    OS_VERSION=`cat /etc/debian_version`
-    OS_FULLNAME="Debian ${OS_VERSION}"
-    LINUX_VERSION="Debian"
-fi
-
-if [ -e "/etc/debian_version" -a -e /etc/lsb-release ]; then
+if [ -f "/etc/debian_version" -a -f "/etc/lsb-release" ]; then
     LINUX_VERSION=$(grep "^DISTRIB_ID=" /etc/lsb-release | cut -d '=' -f2 | sed 's/"//g')
     OS_VERSION=$(grep "^DISTRIB_RELEASE=" /etc/lsb-release | cut -d '=' -f2)
     OS_FULLNAME=$(grep "^DISTRIB_DESCRIPTION=" /etc/lsb-release | cut -d '=' -f2 | sed 's/"//g')
+elif [ -f "/etc/debian_version" ]; then
+    OS_VERSION=$(cat /etc/debian_version)
+    OS_FULLNAME="Debian ${OS_VERSION}"
+    LINUX_VERSION="Debian"
 fi
 
 MAJOR_VERSION=$(echo $OS_VERSION | cut -d "." -f1)
@@ -88,9 +82,17 @@ if [ "${LINUX_VERSION,,}" = "debian" ]; then
         *)
             ;;
     esac
+elif [ "${LINUX_VERSION,,}" = "kali" ]; then
+    case $MAJOR_VERSION in
+        2)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
 elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
     case $MAJOR_VERSION in
-        14)
+        14|15|16)
             ASK_USER=1
             ;;
         *)
@@ -98,7 +100,7 @@ elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
     esac
 elif [ "${LINUX_VERSION,,}" = "linuxmint" ]; then
     case $MAJOR_VERSION in
-        17)
+        17|18)
             ASK_USER=1
             ;;
         *)
@@ -159,7 +161,7 @@ fi
 
 echo_section()
 {
-    echo -e "\e[1;34m$1\e[0m" && sleep 1
+    echo -e "\e[1;34m* $1\e[0m" && sleep 1
 }
 
 echo_section "Getting some important informations before you begin..."
@@ -174,16 +176,26 @@ get_domain()
 }
 
 DOMAIN=$(readopt "Domain name" "$(get_domain)")
+if host "$(hostname).${DOMAIN,,}" > /dev/null; then
+    GO_AHEAD=$(readopt "$(hostname).${DOMAIN,,} is already registered in your DNS server! Do you want to continue?" "n")
+    case ${GO_AHEAD,,} in
+        y|s|yes|si)
+            ;;
+        *)
+            echo_error "Bye bye!"
+            ;;
+    esac
+fi
 WORKGROUP=$(workgroup=$(echo ${DOMAIN,,} | cut -d "." -f1); echo ${workgroup^^})
 
 get_kdcs()
 {
     __DCSERVERS=""
-    __DCS=$(for li in $(host uci.cu | grep address | awk '{print $4}'); \
+    __DCS=$(for li in $(host ${DOMAIN,,} | grep address | awk '{print $4}'); \
     do echo $li; done | sort)
     for __dc in $__DCS; do
         if host $__dc > /dev/null; then
-            __ndc=$(host $__dc | awk '{len=length($5);print $5}')
+            __ndc=$(host $__dc | awk '{print $5}')
             if [ "${__ndc: -1}" = "." ]; then
                 __ndc=$(echo $__ndc | sed 's/.$//g')
             fi
@@ -199,7 +211,9 @@ NTP_SERVER=$(readopt "NTP Server" "${DOMAIN,,}")
 USER_DOMAIN=$(readopt "Domain User" "${USER,,}")
 AUTHORIZED_ACCESS=$(readopt "Authorized Users and Groups" \
 "domain admins,sec-${WORKGROUP,,}-security,${USER_DOMAIN}")
+
 if [ "$AUTHORIZED_ACCESS" != "" ]; then
+    __ALIAS="$AUTHORIZED_ACCESS"
     AUTHORIZED_ACCESS="=${AUTHORIZED_ACCESS}"
 fi
 
@@ -213,16 +227,16 @@ if  ! test -x "$APTBIN"; then
     if test -x "$APTBIN"; then
         APTOPTS="--auto-remove --allow-unauthenticated -y -q"
         else
-            echo_error "Without aptitude, apt or apt-get we can't do anything!"
+            echo_error "Sorry but without aptitude, apt or apt-get we can do nothing!"
     fi
 fi
 
 echo_section "Installing dependencies..."
-$APTBIN update || exit 1
-$APTBIN $APTOPTS install $DEPS || exit 1
+$APTBIN update > /dev/null
+$APTBIN $APTOPTS install $DEPS || echo_error "Sorry but if we can't install the dependencies we can do nothing!" $?
 
 echo_section "Synchronizing date and time via NTP..."
-ntpdate -u $NTP_SERVER && hwclock --systohc
+ntpdate -u $NTP_SERVER > /dev/null && hwclock --systohc
 
 KRB_FILE=/etc/krb5.conf
 SMB_FILE=/etc/samba/smb.conf
@@ -276,9 +290,9 @@ EOF
 echo_section "Setting up samba..."
 cat > $SMB_FILE <<EOF
 [global]
-    workgroup = ${WORKGROUP}
+    workgroup = ${WORKGROUP^^}
     security = ads
-    realm = ${DOMAIN,,}
+    realm = ${DOMAIN^^}
     password server = ${KDCS,,}
     kerberos method = secrets only
     domain logons = no
@@ -304,8 +318,7 @@ cat > $SMB_FILE <<EOF
     comment = Home Directories
     browseable = no
     writable = yes
-;   valid users = %S
-;   valid users = ${DOMAIN^^}\%S
+    valid users = ${USER_DOMAIN,,}
 EOF
 
 echo_section "Setting up nsswitch..."
@@ -341,45 +354,92 @@ Session:
     required    pam_mkhomedir.so umask=0022 skel=/etc/skel
     optional    pam_winbind.so
 EOF
-
+if [ -d  /usr/share/lightdm/lightdm.conf.d ]; then
+    echo_section "Setting up lightdm..."
+    for dd in $(ls /usr/share/lightdm/lightdm.conf.d | line); do
+        cat >> /usr/share/lightdm/lightdm.conf.d/$dd <<EOF
+greeter-show-manual-login=true
+EOF
+    done
+fi
 echo_section "Enabling automatic beginning of winbind..."
 SMBD=$(grep -i "smbd" $WIN_INIT | egrep "^# Should-Start" | wc -l)
 if [ $SMBD -eq 0 ]; then
     sed -i '/^# Should-Start/s/samba/smbd/g' $WIN_INIT
 fi
-if test -x "$(which insserv)"; then
-    insserv -r winbind
-    insserv winbind
-fi
-RESET_SERVICES=""
-if test -x "$(which systemctl)"; then
-    systemctl disable winbind
-    systemctl enable winbind
-    RESET_SERVICES="systemctl restart smbd && systemctl restart winbind"
-fi
 if test -x "$(which update-rc.d)"; then
-    update-rc.d winbind remove
-    update-rc.d winbind defaults
+    update-rc.d -f winbind remove > /dev/null
+    update-rc.d winbind defaults > /dev/null
 fi
+if test -x "$(which insserv)"; then
+    insserv -r winbind > /dev/null
+    insserv winbind > /dev/null
+fi
+SYSTEMCTL_CMD=1
+if test -x "$(which systemctl)"; then
+    systemctl disable winbind > /dev/null
+    systemctl enable winbind > /dev/null
+    SYSTEMCTL_CMD=0
+fi
+
 
 echo_section "Dissabling Kerberos authentication..."
-pam-auth-update
-
-if [ "$RESET_SERVICES" = "" ]; then
-    if test -x "$(which service)"; then
-        RESET_SERVICES="service smbd restart && service winbind restart"
+pam-auth-update --remove krb5 --force
+reset_services()
+{
+    ALL_SERVICES=true
+    [ "$1" = "smbd" ] && ALL_SERVICES=false
+    if [ $SYSTEMCTL_CMD -eq 0 ]; then
+        systemctl restart smbd > /dev/null
+        $ALL_SERVICES && systemctl restart winbind > /dev/null
+    elif test -x "$(which service)"; then
+        service smbd restart > /dev/null
+        $ALL_SERVICES && service winbind restart > /dev/null
     else
-        RESET_SERVICES="$SMB_INIT restart && $WIN_INIT restart"
+        $SMB_INIT restart > /dev/null
+        $ALL_SERVICES && $WIN_INIT restart > /dev/null
     fi
-fi
-$RESET_SERVICES
+    $ALL_SERVICES && sleep 5
+}
+
+reset_services smbd
 
 echo_section "Joining this machine to ${DOMAIN^^}..."
-net join -U $USER_DOMAIN && $RESET_SERVICES && id $USER_DOMAIN > /dev/null
+
+join_pc(){
+    net ads join -U $USER_DOMAIN || echo_error "If previous errors said \
+    something like -> Failed to set account flags for machine account \
+    (NT_STATUS_ACCESS_DENIED) <- please, pick a diferent name for your \
+    machine a tray again!" $?
+    return 0
+}
+
+join_pc && reset_services && id $USER_DOMAIN > /dev/null
 if [ $? -eq 0 ]; then
     echo_section "Setting up sudoers file..."
+    ALIAS=""
+    OLD_IFS="$IFS"
+    IFS=','
+    for acc in $__ALIAS; do
+        acc="${acc##*( )}"
+        acc="${acc%%*( )}"
+        if wbinfo -g | grep "^$acc$" > /dev/null; then
+            if [ "$ALIAS" != "" ]; then
+                ALIAS="$ALIAS, %$acc"
+            else
+                ALIAS="%$acc"
+            fi
+        elif wbinfo -u | grep "^$acc$" > /dev/null; then
+            if [ "$ALIAS" != "" ]; then
+                ALIAS="$ALIAS, $acc"
+            else
+                ALIAS="$acc"
+            fi
+        fi
+    done
+    IFS="$OLD_IFS"
     cat > $SUD_FILE <<EOF
-User_Alias ADMIN_GROUP"$AUTHORIZED_ACCESS"
+User_Alias ADMIN_GROUP="$ALIAS"
 ADMIN_GROUP ALL=(ALL:ALL) ALL
 EOF
     chmod 0440 $SUD_FILE
