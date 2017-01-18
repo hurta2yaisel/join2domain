@@ -17,7 +17,7 @@ fi
 OLD_RUNS=$(ls *.run)
 rm -f *.run
 
-makeself --xz --notemp --lsm ./join2domain.lsm \
+makeself --xz --complevel 9e --notemp --lsm ./join2domain.lsm \
 join2domain/ join2domain-v$NEW_VERSION.run "join2domain files..." ./join2domain.sh
 
 tar -czvf ../join2domain-v$NEW_VERSION.tar.gz join2domain-v$NEW_VERSION.run

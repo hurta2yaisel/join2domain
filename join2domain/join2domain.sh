@@ -31,7 +31,7 @@ echo_info """
 ########################################################################
 # join2domain.sh                                                       #
 #                                                                      #
-# Copyright 2015 Yaisel Hurtado González <yaiselhg@uci.cu>             #
+# Copyright 2015-2017 Yaisel Hurtado González <yaiselhg@uci.cu>        #
 #                                                                      #
 # This program is free software; you can redistribute it and/or modify #
 # it under the terms of the GNU General Public License as published by #
@@ -92,7 +92,7 @@ elif [ "${LINUX_VERSION,,}" = "kali" ]; then
     esac
 elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
     case $MAJOR_VERSION in
-        14|15)
+        14|15|16)
             ASK_USER=1
             ;;
         *)
@@ -100,7 +100,7 @@ elif [ "${LINUX_VERSION,,}" = "ubuntu" ]; then
     esac
 elif [ "${LINUX_VERSION,,}" = "linuxmint" ]; then
     case $MAJOR_VERSION in
-        17)
+        17|18)
             ASK_USER=1
             ;;
         *)
@@ -367,6 +367,10 @@ SMBD=$(grep -i "smbd" $WIN_INIT | egrep "^# Should-Start" | wc -l)
 if [ $SMBD -eq 0 ]; then
     sed -i '/^# Should-Start/s/samba/smbd/g' $WIN_INIT
 fi
+if test -x "$(which update-rc.d)"; then
+    update-rc.d -f winbind remove > /dev/null
+    update-rc.d winbind defaults > /dev/null
+fi
 if test -x "$(which insserv)"; then
     insserv -r winbind > /dev/null
     insserv winbind > /dev/null
@@ -377,10 +381,7 @@ if test -x "$(which systemctl)"; then
     systemctl enable winbind > /dev/null
     SYSTEMCTL_CMD=0
 fi
-if test -x "$(which update-rc.d)"; then
-    update-rc.d -f winbind remove > /dev/null
-    update-rc.d winbind defaults > /dev/null
-fi
+
 
 echo_section "Dissabling Kerberos authentication..."
 pam-auth-update --remove krb5 --force
@@ -409,7 +410,7 @@ join_pc(){
     net ads join -U $USER_DOMAIN || echo_error "If previous errors said \
     something like -> Failed to set account flags for machine account \
     (NT_STATUS_ACCESS_DENIED) <- please, pick a diferent name for your \
-    machine a try again!" $?
+    machine a tray again!" $?
     return 0
 }
 
