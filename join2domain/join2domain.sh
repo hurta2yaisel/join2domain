@@ -70,7 +70,7 @@ elif [ -f "/etc/debian_version" ]; then
     OS_VERSION=$(cat /etc/debian_version)
     OS_FULLNAME="Debian ${OS_VERSION}"
     LINUX_VERSION="Debian"
-elif [ -f "/etc/redhat-release" ]
+elif [ -f "/etc/redhat-release" ]; then
     FIND=$(grep "CentOS" /etc/redhat-release)
     if [ ! "${FIND}" = "" ]; then
         OS_FULLNAME=$(grep "CentOS" /etc/redhat-release)
