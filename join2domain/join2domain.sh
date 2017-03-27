@@ -70,6 +70,19 @@ elif [ -f "/etc/debian_version" ]; then
     OS_VERSION=$(cat /etc/debian_version)
     OS_FULLNAME="Debian ${OS_VERSION}"
     LINUX_VERSION="Debian"
+elif [ -f "/etc/redhat-release" ]
+    FIND=$(grep "CentOS" /etc/redhat-release)
+    if [ ! "${FIND}" = "" ]; then
+        OS_FULLNAME=$(grep "CentOS" /etc/redhat-release)
+        LINUX_VERSION="CentOS"
+        OS_VERSION="$OS_FULLNAME"
+        for osv in $OS_FULLNAME; do
+            if [[ $osv =~ [0-9] ]]; then
+                OS_VERSION=$osv
+                break
+            fi
+    done
+    fi
 fi
 
 MAJOR_VERSION=$(echo $OS_VERSION | cut -d "." -f1)
@@ -109,6 +122,14 @@ elif [ "${LINUX_VERSION,,}" = "linuxmint" ]; then
 elif [ "${LINUX_VERSION,,}" = "nova" ]; then
     case $MAJOR_VERSION in
         5)
+            ASK_USER=1
+            ;;
+        *)
+            ;;
+    esac
+elif [ "${LINUX_VERSION,,}" = "centos" ]; then
+    case $MAJOR_VERSION in
+        7)
             ASK_USER=1
             ;;
         *)
@@ -217,27 +238,72 @@ if [ "$AUTHORIZED_ACCESS" != "" ]; then
     AUTHORIZED_ACCESS="=${AUTHORIZED_ACCESS}"
 fi
 
-DEPS="ntpdate samba smbclient samba-common winbind krb5-user libpam-krb5 \
-libpam-winbind libnss-winbind sudo"
-
-APTBIN=$(which aptitude)
-APTOPTS="--allow-untrusted -y -q"
-if  ! test -x "$APTBIN"; then
-    APTBIN=$(which apt || which apt-get)
-    if test -x "$APTBIN"; then
-        APTOPTS="--auto-remove --allow-unauthenticated -y -q"
-        else
-            echo_error "Sorry but without aptitude, apt or apt-get we can do nothing!"
+if [[ "${LINUX_VERSION,,}" == "centos" ]]; then
+    DEPS="authconfig samba samba-winbind samba-winbind-clients pam_krb5 oddjob oddjob-mkhomedir ntpdate"
+    YUMBIN=$(which yum)
+    YUMOPTS="-y -q"
+    if  ! test -x "$YUMBIN"; then
+        echo_error "Sorry but without yum we can do nothing!"
     fi
-fi
+    echo_section "Installing dependencies..."
+    $YUMBIN $YUMOPTS update  > /dev/null
+    $YUMBIN $YUMOPTS install $DEPS || echo_error "Sorry but if we can't install the dependencies we can do nothing!" $?
+else
+    DEPS="ntpdate samba smbclient samba-common winbind krb5-user libpam-krb5 \
+    libpam-winbind libnss-winbind sudo"
 
-echo_section "Installing dependencies..."
-$APTBIN update > /dev/null
-$APTBIN $APTOPTS install $DEPS || echo_error "Sorry but if we can't install the dependencies we can do nothing!" $?
+    APTBIN=$(which aptitude)
+    APTOPTS="--allow-untrusted -y -q"
+    if  ! test -x "$APTBIN"; then
+        APTBIN=$(which apt || which apt-get)
+        if test -x "$APTBIN"; then
+            APTOPTS="--auto-remove --allow-unauthenticated -y -q"
+            else
+                echo_error "Sorry but without aptitude, apt or apt-get we can do nothing!"
+        fi
+    fi
+
+    echo_section "Installing dependencies..."
+    $APTBIN update > /dev/null
+    $APTBIN $APTOPTS install $DEPS || echo_error "Sorry but if we can't install the dependencies we can do nothing!" $?
+fi
 
 echo_section "Synchronizing date and time via NTP..."
 ntpdate -u $NTP_SERVER > /dev/null && hwclock --systohc
 
+if [[ "${LINUX_VERSION,,}" == "centos" ]]; then
+    WIN_FILE=/etc/security/pam_winbind.conf
+    echo_section "Making backups of some files..."
+    cp $WIN_FILE $HOME/$(basename $WIN_FILE).$$.bak
+
+    echo_section "Enabling automatic beginning of oddjob, samba y winbind..."
+    if test -x "$(which systemctl)"; then
+        systemctl enable oddjobd; systemctl start oddjobd
+        systemctl enable smb; systemctl start smb
+        systemctl enable winbind; systemctl start winbind
+    else
+        chkconfig oddjobd on; systemctl start oddjobd
+        chkconfig smb on; systemctl start smb
+        chkconfig winbind on; systemctl start winbind
+    fi
+
+    echo_section "Setting up pam, kerberos, samba, nsswitch y winbind..."
+
+    grep -rl pam_mkhomedir.so /etc/pam.d/ | xargs sed -i 's/pam_mkhomedir.so/pam_oddjob_mkhomedir.so/g'
+
+    authconfig --disablekrb5 --enablewinbind --enablewinbindauth \
+    --smbsecurity=ads --smbrealm=${DOMAIN^^} --smbworkgroup=${WORKGROUP^^} \
+    --smbservers="${KDCS,,}" \
+    --winbindtemplatehomedir=/home/%U --winbindtemplateshell=/bin/bash \
+    --enablemkhomedir --enablewinbindusedefaultdomain --update
+
+    cat > $WIN_FILE <<EOF
+[global]
+cached_login = yes
+require_membership_of = ${__ALIAS}
+mkhomedir = yes
+EOF
+else
 KRB_FILE=/etc/krb5.conf
 SMB_FILE=/etc/samba/smb.conf
 WIN_FILE=/usr/share/pam-configs/winbind
@@ -247,10 +313,9 @@ SMB_INIT=/etc/init.d/smbd
 SUD_FILE=/etc/sudoers.d/10_admins
 
 echo_section "Making backups of some files..."
-cp $KRB_FILE{,.bak}
-cp $SMB_FILE{,.bak}
-mkdir -p $HOME/backup
-cp $WIN_FILE  $HOME/backup/winbind.bak
+cp $KRB_FILE{,$$.bak}
+cp $SMB_FILE{,$$.bak}
+cp $WIN_FILE $HOME/$(basename $WIN_FILE).$$.bak
 
 echo_section "Setting up kerberos..."
 cat > $KRB_FILE <<EOF
@@ -403,6 +468,7 @@ reset_services()
 }
 
 reset_services smbd
+fi
 
 echo_section "Joining this machine to ${DOMAIN^^}..."
 
@@ -413,9 +479,14 @@ join_pc(){
     machine a tray again!" $?
     return 0
 }
+JOINED=1
+if [[ "${LINUX_VERSION}" == "centos" ]]; then
+    join_pc && id $USER_DOMAIN > /dev/null && JOINED=0
+else
+    join_pc && reset_services && id $USER_DOMAIN > /dev/null && JOINED=0
+fi
 
-join_pc && reset_services && id $USER_DOMAIN > /dev/null
-if [ $? -eq 0 ]; then
+if [ $JOINED -eq 0 ]; then
     echo_section "Setting up sudoers file..."
     ALIAS=""
     OLD_IFS="$IFS"
