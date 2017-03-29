@@ -1,6 +1,6 @@
 Begin3
 Title:          join2domain.sh
-Version:        0.2.4
+Version:        0.2.7
 Description:    join2domain.sh is a script that allows you to join a machine to a Samba/AD domain.
 Keywords:       Join domain samba active directory
 Author:         Yaisel Hurtado (yaiselhg@uci.cu)

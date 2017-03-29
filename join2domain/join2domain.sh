@@ -31,7 +31,7 @@ echo_info """
 ########################################################################
 # join2domain.sh                                                       #
 #                                                                      #
-# Copyright 2015-2017 Yaisel Hurtado González <yaiselhg@uci.cu>        #
+# Copyright 2015-$(date +'%Y') Yaisel Hurtado González <yaiselhg@uci.cu>        #
 #                                                                      #
 # This program is free software; you can redistribute it and/or modify #
 # it under the terms of the GNU General Public License as published by #
@@ -271,23 +271,37 @@ fi
 echo_section "Synchronizing date and time via NTP..."
 ntpdate -u $NTP_SERVER > /dev/null && hwclock --systohc
 
+WIN_INIT=/etc/init.d/winbind
+SMB_INIT=/etc/init.d/smbd
+SUD_FILE=/etc/sudoers.d/10_admins
+
 reset_services()
 {
     ALL_SERVICES=true
     [ "$1" = "smbd" ] && ALL_SERVICES=false
-    if [ $SYSTEMCTL_CMD -eq 0 ]; then
-        if [[ "${LINUX_VERSION,,}" != "centos" ]]; then
+    if [[ "${LINUX_VERSION,,}" != "centos" ]]; then
+        if test -x "$(which systemctl)"; then
             systemctl restart smbd > /dev/null
+            $ALL_SERVICES && systemctl restart winbind > /dev/null
+        elif test -x "$(which service)"; then
+            service smbd restart > /dev/null
+            $ALL_SERVICES && service winbind restart > /dev/null
         else
-            systemctl restart smb > /dev/null
+            $SMB_INIT restart > /dev/null
+            $ALL_SERVICES && $WIN_INIT restart > /dev/null
         fi
-        $ALL_SERVICES && systemctl restart winbind > /dev/null
-    elif test -x "$(which service)"; then
-        service smbd restart > /dev/null
-        $ALL_SERVICES && service winbind restart > /dev/null
     else
-        $SMB_INIT restart > /dev/null
-        $ALL_SERVICES && $WIN_INIT restart > /dev/null
+        SMB_INIT=/etc/init.d/smb
+        if test -x "$(which systemctl)"; then
+            systemctl restart smb > /dev/null
+            $ALL_SERVICES && systemctl restart winbind > /dev/null
+        elif test -x "$(which service)"; then
+            service smb restart > /dev/null
+            $ALL_SERVICES && service winbind restart > /dev/null
+        else
+            $SMB_INIT restart > /dev/null
+            $ALL_SERVICES && $WIN_INIT restart > /dev/null
+        fi
     fi
     $ALL_SERVICES && sleep 5
 }
@@ -329,9 +343,6 @@ KRB_FILE=/etc/krb5.conf
 SMB_FILE=/etc/samba/smb.conf
 WIN_FILE=/usr/share/pam-configs/winbind
 NSS_FILE=/etc/nsswitch.conf
-WIN_INIT=/etc/init.d/winbind
-SMB_INIT=/etc/init.d/smbd
-SUD_FILE=/etc/sudoers.d/10_admins
 
 echo_section "Making backups of some files..."
 cp $KRB_FILE{,$$.bak}
@@ -518,7 +529,12 @@ User_Alias ADMIN_GROUP="$ALIAS"
 ADMIN_GROUP ALL=(ALL:ALL) ALL
 EOF
     chmod 0440 $SUD_FILE
-    adduser $USER_DOMAIN sudo > /dev/null
+    if [[ "${LINUX_VERSION,,}" != "centos" ]]; then
+        adduser $USER_DOMAIN sudo > /dev/null
+    else
+        usermod -G wheel $USER_DOMAIN > /dev/null
+    fi
+
     echo_info "$(net ads testjoin). Enjoy it!!!"
     exit 0
 fi
