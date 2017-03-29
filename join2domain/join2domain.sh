@@ -189,7 +189,7 @@ echo_section "Getting some important informations before you begin..."
 
 get_domain()
 {
-    __DOMAIN=$(egrep "^(search|domain)" /etc/resolv.conf | line | awk '{print $2}')
+    __DOMAIN=$(egrep "^(search|domain)" /etc/resolv.conf | head -n 1 | awk '{print $2}')
     if [ "$__DOMAIN" = "" ]; then
         __DOMAIN=$(hostname -d || echo "uci.cu")
     fi
@@ -270,6 +270,27 @@ fi
 
 echo_section "Synchronizing date and time via NTP..."
 ntpdate -u $NTP_SERVER > /dev/null && hwclock --systohc
+
+reset_services()
+{
+    ALL_SERVICES=true
+    [ "$1" = "smbd" ] && ALL_SERVICES=false
+    if [ $SYSTEMCTL_CMD -eq 0 ]; then
+        if [[ "${LINUX_VERSION,,}" != "centos" ]]; then
+            systemctl restart smbd > /dev/null
+        else
+            systemctl restart smb > /dev/null
+        fi
+        $ALL_SERVICES && systemctl restart winbind > /dev/null
+    elif test -x "$(which service)"; then
+        service smbd restart > /dev/null
+        $ALL_SERVICES && service winbind restart > /dev/null
+    else
+        $SMB_INIT restart > /dev/null
+        $ALL_SERVICES && $WIN_INIT restart > /dev/null
+    fi
+    $ALL_SERVICES && sleep 5
+}
 
 if [[ "${LINUX_VERSION,,}" == "centos" ]]; then
     WIN_FILE=/etc/security/pam_winbind.conf
@@ -421,7 +442,7 @@ Session:
 EOF
 if [ -d  /usr/share/lightdm/lightdm.conf.d ]; then
     echo_section "Setting up lightdm..."
-    for dd in $(ls /usr/share/lightdm/lightdm.conf.d | line); do
+    for dd in $(ls /usr/share/lightdm/lightdm.conf.d | head -n 1); do
         cat >> /usr/share/lightdm/lightdm.conf.d/$dd <<EOF
 greeter-show-manual-login=true
 EOF
@@ -447,28 +468,11 @@ if test -x "$(which systemctl)"; then
     SYSTEMCTL_CMD=0
 fi
 
-
 echo_section "Dissabling Kerberos authentication..."
 pam-auth-update --remove krb5 --force
-reset_services()
-{
-    ALL_SERVICES=true
-    [ "$1" = "smbd" ] && ALL_SERVICES=false
-    if [ $SYSTEMCTL_CMD -eq 0 ]; then
-        systemctl restart smbd > /dev/null
-        $ALL_SERVICES && systemctl restart winbind > /dev/null
-    elif test -x "$(which service)"; then
-        service smbd restart > /dev/null
-        $ALL_SERVICES && service winbind restart > /dev/null
-    else
-        $SMB_INIT restart > /dev/null
-        $ALL_SERVICES && $WIN_INIT restart > /dev/null
-    fi
-    $ALL_SERVICES && sleep 5
-}
+fi
 
 reset_services smbd
-fi
 
 echo_section "Joining this machine to ${DOMAIN^^}..."
 
